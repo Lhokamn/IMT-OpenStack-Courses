@@ -1,0 +1,18 @@
+clouds:
+  openstack_admin:
+    auth:
+      auth_url: http://172.16.37.140/identity
+      username: admin
+      password: secret
+      project_name: admin
+      user_domain_name: Default
+      project_domain_name: Default
+
+  openstack_user:
+    auth:
+      auth_url: http://172.16.37.140/identity
+      username: imt-ansible
+      password: imt
+      project_name: imt-ansible
+      user_domain_name: Default
+      project_domain_name: Default

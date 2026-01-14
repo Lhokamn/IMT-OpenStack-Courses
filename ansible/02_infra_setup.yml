@@ -1,0 +1,81 @@
+---
+- name: Configuration de l'infrastructure (Utilisateur Projet)
+  hosts: localhost
+  connection: local
+  vars:
+    ansible_python_interpreter: /home/ubuntu/ansible/venv/bin/python
+    # Nom du cloud défini dans votre clouds.yaml pour le nouvel utilisateur
+    target_cloud: openstack_user 
+
+  tasks:
+    - name: 3. Création de la paire de clés SSH
+      openstack.cloud.keypair:
+        cloud: "{{ target_cloud }}"
+        state: present
+        name: "ansible-key"
+        # Assurez-vous que cette clé existe sur votre machine ubuntu
+        public_key: "{{ lookup('file', '~/.ssh/id_rsa_openstack.pub') }}"
+
+    - name: 5. Network - Création du réseau privé
+      openstack.cloud.network:
+        cloud: "{{ target_cloud }}"
+        state: present
+        name: private_net
+
+    - name: 5. Network - Création du subnet
+      openstack.cloud.subnet:
+        cloud: "{{ target_cloud }}"
+        state: present
+        network_name: private_net
+        name: private_subnet
+        cidr: 192.168.10.0/24
+        dns_nameservers: [8.8.8.8]
+
+    - name: 5. Network - Création du Router
+      openstack.cloud.router:
+        cloud: "{{ target_cloud }}"
+        state: present
+        name: main_router
+        network: public  # Vérifiez le nom de votre réseau externe (public/external)
+        interfaces:
+          - private_subnet
+
+    - name: 6. Security Group - Création
+      openstack.cloud.security_group:
+        cloud: "{{ target_cloud }}"
+        state: present
+        name: "sg_basic"
+        description: "Allow HTTP, HTTPS, ICMP, SSH"
+
+    - name: 6. Security Group - Règles
+      openstack.cloud.security_group_rule:
+        cloud: "{{ target_cloud }}"
+        security_group: "sg_basic"
+        protocol: "{{ item.proto }}"
+        port_range_min: "{{ item.port }}"
+        port_range_max: "{{ item.port }}"
+        remote_ip_prefix: 0.0.0.0/0
+      loop:
+        - { proto: tcp, port: 80 }   # HTTP
+        - { proto: tcp, port: 443 }  # HTTPS
+        - { proto: tcp, port: 22 }   # SSH
+        - { proto: icmp, port: -1 }  # ICMP (Ping)
+
+    - name: 7. Start VM
+      openstack.cloud.server:
+        cloud: "{{ target_cloud }}"
+        state: present
+        name: "instance-ansible"
+        image: cirros-0.6.3-x86_64-disk
+        flavor: m1.tiny
+        key_name: "ansible-key"
+        network: private_net
+        security_groups: ["sg_basic"]
+        wait: yes
+
+    - name: 8. Ajout IP flottante
+      openstack.cloud.floating_ip:
+        cloud: "{{ target_cloud }}"
+        server: "instance-ansible"
+        network: public # Le pool d'IP flottantes
+        wait: yes

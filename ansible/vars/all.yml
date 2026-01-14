@@ -1,0 +1,21 @@
+# Informations de connexion (à adapter selon votre clouds.yaml)
+os_cloud: "openstack"
+
+# Configuration Projet/User
+os_project_name: "imt-ansible"
+os_user_name: "imt-ansible"
+os_user_password: "imt"
+
+# Configuration Réseau
+network_name: "private_net"
+subnet_name: "private_subnet"
+subnet_cidr: "192.168.30.0/24"
+router_name: "main_router"
+public_network: "public" # Nom du réseau externe
+
+# Instance
+instance_name: "instance-cirros-ansible"
+image_name: "cirros-0.6.3-x86_64-disk"
+flavor_name: "m1.tiny"
+ssh_key_name: "my_admin_key"
+ssh_public_key_path: "/home/ubuntu/.ssh/id_rsa_openstack.pub"

@@ -1,0 +1,31 @@
+---
+- name: Configuration Complete Identity (Admin)
+  hosts: localhost
+  connection: local
+  # On remet la variable ici par sécurité si le .cfg est ignoré
+  vars:
+    ansible_python_interpreter: /home/ubuntu/ansible/venv/bin/python
+  tasks:
+    - name: Créer le projet
+      openstack.cloud.project:
+        cloud: openstack_admin
+        state: present
+        name: imt-ansible
+        description: "Projet créé via Ansible"
+
+    - name: Créer l'utilisateur
+      openstack.cloud.identity_user:
+        cloud: openstack_admin
+        state: present
+        name: imt-ansible
+        password: "imt"
+        default_project: imt-ansible
+
+    - name: Associer l'utilisateur au projet avec le rôle member
+      openstack.cloud.role_assignment:
+        cloud: openstack_admin
+        user: imt-ansible
+        project: imt-ansible
+        role: member
+        wait: true
+        state: present
