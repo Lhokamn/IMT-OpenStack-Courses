@@ -1,0 +1,58 @@
+heat_template_version: 2018-08-31
+description: Un serveur Web qui s'ajoute au Load Balancer
+
+parameters:
+  image:
+    type: string
+  flavor:
+    type: string
+  key_name:
+    type: string
+  network_id:
+    type: string
+  subnet_id:
+    type: string
+  security_group:
+    type: string
+  pool_id:
+    type: string
+  db_ip:
+    type: string
+  db_password:
+    type: string
+
+resources:
+  # 1. La VM Wordpress
+  web_server:
+    type: OS::Nova::Server
+    properties:
+      image: { get_param: image }
+      flavor: { get_param: flavor }
+      key_name: { get_param: key_name }
+      networks:
+        - network: { get_param: network_id }
+      security_groups:
+        - { get_param: security_group }
+      user_data_format: RAW
+      user_data:
+        str_replace:
+          template: |
+            #!/bin/bash
+            apt-get update
+            apt-get install -y apache2 php libapache2-mod-php php-mysql
+            rm /var/www/html/index.html
+            echo "<h1>Installation WP via Heat</h1><p>DB Server: DB_IP_ADDR</p>" > /var/www/html/index.php
+            # Ici, vous ajouteriez le script pour télécharger et configurer wp-config.php
+            # en utilisant l'adresse DB_IP_ADDR et le mot de passe.
+            systemctl restart apache2
+          params:
+            DB_IP_ADDR: { get_param: db_ip }
+
+  # 2. L'enregistrement dans le pool Octavia (Magie ici !)
+  pool_member:
+    type: OS::Octavia::PoolMember
+    properties:
+      pool: { get_param: pool_id }
+      address: { get_attr: [web_server, first_address] }
+      subnet: { get_param: subnet_id }
+      protocol_port: 80

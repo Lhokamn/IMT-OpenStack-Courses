@@ -1,0 +1,179 @@
+heat_template_version: 2018-08-31
+description: Déploiement complet Octavia + Autoscaling + DB + Réseau Privé
+
+parameters:
+  public_net_id:
+    type: string
+    description: ID du réseau public (floating IP network)
+  image_name:
+    type: string
+    default: "Ubuntu 22.04"
+  flavor_name:
+    type: string
+    default: "m1.small"
+  key_name:
+    type: string
+  db_password:
+    type: string
+    hidden: true
+
+resources:
+  # ==========================================================
+  # 1. RÉSEAU (Privé + Routeur)
+  # ==========================================================
+  private_net:
+    type: OS::Neutron::Net
+
+  private_subnet:
+    type: OS::Neutron::Subnet
+    properties:
+      network_id: { get_resource: private_net }
+      cidr: 192.168.10.0/24
+      dns_nameservers: [8.8.8.8]
+
+  router:
+    type: OS::Neutron::Router
+    properties:
+      external_gateway_info:
+        network: { get_param: public_net_id }
+
+  router_interface:
+    type: OS::Neutron::RouterInterface
+    properties:
+      router_id: { get_resource: router }
+      subnet_id: { get_resource: private_subnet }
+
+  # ==========================================================
+  # 2. SÉCURITÉ (SG)
+  # ==========================================================
+  web_sg:
+    type: OS::Neutron::SecurityGroup
+    properties:
+      description: Allow HTTP and ICMP
+      rules:
+        - protocol: tcp
+          port_range_min: 80
+          port_range_max: 80
+        - protocol: icmp # Le Ping
+        - protocol: tcp # SSH pour debugging
+          port_range_min: 22
+          port_range_max: 22
+
+  # ==========================================================
+  # 3. BASE DE DONNÉES (VM Unique)
+  # ==========================================================
+  db_server:
+    type: OS::Nova::Server
+    properties:
+      name: mysql-database
+      image: { get_param: image_name }
+      flavor: { get_param: flavor_name }
+      key_name: { get_param: key_name }
+      networks:
+        - network: { get_resource: private_net }
+      security_groups: [{ get_resource: web_sg }]
+      user_data:
+        str_replace:
+          template: |
+            #!/bin/bash
+            apt-get update
+            apt-get install -y mariadb-server
+            # Configuration simplifiée pour l'exemple (bind-address 0.0.0.0 pour écouter le réseau)
+            sed -i 's/127.0.0.1/0.0.0.0/g' /etc/mysql/mariadb.conf.d/50-server.cnf
+            systemctl restart mariadb
+            mysql -e "CREATE DATABASE wordpress;"
+            mysql -e "CREATE USER 'wp_user'@'%' IDENTIFIED BY 'DB_PASS';"
+            mysql -e "GRANT ALL PRIVILEGES ON wordpress.* TO 'wp_user'@'%';"
+            mysql -e "FLUSH PRIVILEGES;"
+          params:
+            DB_PASS: { get_param: db_password }
+
+  # ==========================================================
+  # 4. LOAD BALANCER (Octavia)
+  # ==========================================================
+  lb:
+    type: OS::Octavia::LoadBalancer
+    properties:
+      vip_subnet: { get_resource: private_subnet }
+
+  lb_listener:
+    type: OS::Octavia::Listener
+    properties:
+      loadbalancer: { get_resource: lb }
+      protocol: HTTP
+      protocol_port: 80
+
+  lb_pool:
+    type: OS::Octavia::Pool
+    properties:
+      listener: { get_resource: lb_listener }
+      lb_algorithm: ROUND_ROBIN
+      protocol: HTTP
+      # Health Monitor pour vérifier si WP répond
+      # healthmonitor:
+      #   type: HTTP
+      #   delay: 5
+      #   timeout: 3
+      #   max_retries: 2
+      #   url_path: /index.php
+      #   expected_codes: 200
+
+  # Floating IP pour le Load Balancer (pour y accéder depuis internet)
+  lb_floating_ip:
+    type: OS::Neutron::FloatingIP
+    properties:
+      floating_network: { get_param: public_net_id }
+      port_id: { get_attr: [lb, vip_port_id] }
+
+  # ==========================================================
+  # 5. AUTO SCALING GROUP
+  # ==========================================================
+  asg:
+    type: OS::Heat::AutoScalingGroup
+    properties:
+      min_size: 1
+      max_size: 5
+      desired_capacity: 2
+      resource:
+        # AU LIEU DE "Custom::WordpressServer", on utilise un Stack générique
+        type: OS::Heat::Stack
+        properties:
+          # C'est ici la magie : on injecte le contenu du fichier directement
+          template: { get_file: wordpress-node.yml }
+          timeout: 60
+          parameters:
+            image: { get_param: image_name }
+            flavor: { get_param: flavor_name }
+            key_name: { get_param: key_name }
+            network_id: { get_resource: private_net }
+            subnet_id: { get_resource: private_subnet }
+            security_group: { get_resource: web_sg }
+            pool_id: { get_resource: lb_pool }
+            db_ip: { get_attr: [db_server, first_address] }
+            db_password: { get_param: db_password }
+
+  # Politique de montée en charge (Scale UP)
+  scale_up_policy:
+    type: OS::Heat::ScalingPolicy
+    properties:
+      adjustment_type: change_in_capacity
+      auto_scaling_group_id: { get_resource: asg }
+      cooldown: 60
+      scaling_adjustment: 1
+
+  # Politique de réduction de charge (Scale DOWN)
+  scale_down_policy:
+    type: OS::Heat::ScalingPolicy
+    properties:
+      adjustment_type: change_in_capacity
+      auto_scaling_group_id: { get_resource: asg }
+      cooldown: 60
+      scaling_adjustment: -1
+
+outputs:
+  load_balancer_ip:
+    description: L'IP publique pour accéder au Wordpress
+    value: { get_attr: [lb_floating_ip, floating_ip_address] }
+  db_private_ip:
+    description: IP Privée de la DB
+    value: { get_attr: [db_server, first_address] }
