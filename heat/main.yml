@@ -28,7 +28,7 @@ resources:
     type: OS::Neutron::Subnet
     properties:
       network_id: { get_resource: private_net }
-      cidr: 192.168.10.0/24
+      cidr: 192.168.1.0/24
       dns_nameservers: [8.8.8.8]
 
   router:
@@ -58,6 +58,9 @@ resources:
         - protocol: tcp # SSH pour debugging
           port_range_min: 22
           port_range_max: 22
+        - protocol: tcp
+          port_range_max: 3306
+          port_range_min: 3306
 
   # ==========================================================
   # 3. BASE DE DONNÉES (VM Unique)

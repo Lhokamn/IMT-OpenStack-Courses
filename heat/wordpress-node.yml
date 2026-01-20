@@ -38,17 +38,43 @@ resources:
         str_replace:
           template: |
             #!/bin/bash
+            # On active le mode verbeux pour les logs (/var/log/cloud-init-output.log)
+            set -x 
+
+            # 1. Installation des paquets
             apt-get update
-            apt-get install -y apache2 php libapache2-mod-php php-mysql
-            rm /var/www/html/index.html
-            echo "<h1>Installation WP via Heat</h1><p>DB Server: DB_IP_ADDR</p>" > /var/www/html/index.php
-            # Ici, vous ajouteriez le script pour télécharger et configurer wp-config.php
-            # en utilisant l'adresse DB_IP_ADDR et le mot de passe.
+            apt-get install -y apache2 php libapache2-mod-php php-mysql zip wget
+
+            # 2. Nettoyage du dossier par défaut d'Apache
+            rm -rf /var/www/html/*
+
+            # 3. Téléchargement et installation à la racine
+            cd /tmp
+            wget https://wordpress.org/latest.zip
+            unzip latest.zip
+            # On déplace le CONTENU du dossier wordpress directement dans html
+            mv wordpress/* /var/www/html/
+            
+            # 4. Configuration automatique de WP
+            cd /var/www/html
+            cp wp-config-sample.php wp-config.php
+            
+            # On remplace les valeurs par défaut par nos paramètres Heat
+            # Note: On suppose que la DB et le User sont ceux créés dans main.yml (wordpress / wp_user)
+            sed -i "s/database_name_here/wordpress/" wp-config.php
+            sed -i "s/username_here/wp_user/" wp-config.php
+            sed -i "s/password_here/DB_PASSWORD_VAL/" wp-config.php
+            sed -i "s/localhost/DB_IP_ADDR/" wp-config.php
+
+            # 5. Permissions et redémarrage
+            chown -R www-data:www-data /var/www/html/
+            chmod -R 755 /var/www/html/
             systemctl restart apache2
           params:
             DB_IP_ADDR: { get_param: db_ip }
+            DB_PASSWORD_VAL: { get_param: db_password }
 
-  # 2. L'enregistrement dans le pool Octavia (Magie ici !)
+  # 2. L'enregistrement dans le pool Octavia
   pool_member:
     type: OS::Octavia::PoolMember
     properties:
